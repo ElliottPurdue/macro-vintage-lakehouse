@@ -1,0 +1,70 @@
+version: 2
+
+models:
+  - name: release_revisions
+    description: >
+      One row per observation: its headline number as first released and as
+      it stands now. The headline is the value, its change from the previous
+      period, or its percent change, as set in seeds/series_measures.csv. A
+      change uses the previous period's value as known on the same day.
+      Written to s3://<bucket>/gold/release_revisions.parquet.
+    columns:
+      - name: series_id
+        data_tests: [not_null]
+      - name: observation_date
+        data_tests: [not_null]
+      - name: measure
+        data_tests: [not_null]
+      - name: versions
+        description: How many versions ALFRED holds for the observation, including '.' versions.
+        data_tests: [not_null]
+      - name: first_release_date
+        description: The first day the observation had a published value.
+      - name: latest_release_date
+        description: The day the current version was published.
+      - name: revision
+        description: latest_headline minus first_headline, in the series' revision_units.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [series_id, observation_date]
+      - expression_is_true:
+          arguments:
+            expression: first_release_date is null or first_release_date <= latest_release_date
+
+  - name: series_revision_summary
+    description: >
+      Revision statistics per series over mature observations: those first
+      released at least var('mature_after_years') years before the series'
+      newest vintage. Written to s3://<bucket>/gold/series_revision_summary.parquet.
+    columns:
+      - name: series_id
+        data_tests: [unique, not_null]
+      - name: share_revised
+        description: Share of mature observations whose headline changed after first release.
+      - name: mean_revision
+        description: Average of latest minus first; positive means first releases ran low.
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: share_revised between 0 and 1 and observations > 0
+
+unit_tests:
+  - name: a_first_release_is_compared_with_the_prior_period_as_known_that_day
+    model: release_revisions
+    given:
+      - input: ref('observation_versions')
+        rows:
+          - {series_id: TEST, observation_date: "2024-01-01", value: 100.0, valid_from: "2024-02-02", valid_to: "2024-03-07", is_current: false}
+          - {series_id: TEST, observation_date: "2024-01-01", value: 120.0, valid_from: "2024-03-08", valid_to: "9999-12-31", is_current: true}
+          - {series_id: TEST, observation_date: "2024-02-01", value: 150.0, valid_from: "2024-03-01", valid_to: "9999-12-31", is_current: true}
+      - input: ref('series_measures')
+        rows:
+          - {series_id: TEST, measure: percent_change}
+      - input: ref('stg_fred__series')
+        rows:
+          - {series_id: TEST, frequency: M}
+    expect:
+      rows:
+        - {observation_date: "2024-01-01", versions: 2, first_release_date: "2024-02-02", first_headline: null, latest_headline: null, revision: null}
+        - {observation_date: "2024-02-01", versions: 1, first_release_date: "2024-03-01", first_headline: 50.0, latest_headline: 25.0, revision: -25.0}

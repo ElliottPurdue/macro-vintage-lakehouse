@@ -1,0 +1,63 @@
+version: 2
+
+models:
+  - name: observation_versions
+    description: >
+      One row per value per knowledge interval: the version of an observation
+      that was the published one from valid_from through valid_to. The current
+      version has a valid_to of 9999-12-31, so the value known on date D is the
+      row where valid_from <= D <= valid_to. Written to
+      s3://<bucket>/silver/observation_versions.parquet.
+    columns:
+      - name: series_id
+        data_tests: [not_null]
+      - name: observation_date
+        description: The period the value describes.
+        data_tests: [not_null]
+      - name: version_number
+        description: 1 for the oldest version ALFRED holds, counting up in order of valid_from.
+        data_tests: [not_null]
+      - name: value
+        description: >
+          The published value, or NULL where ALFRED shows '.', meaning nothing
+          was published for the period during this interval. Current values can
+          be NULL too, for periods a series no longer publishes.
+      - name: previous_value
+        description: The value of the version before this one; NULL for the first version.
+      - name: valid_from
+        data_tests: [not_null]
+      - name: valid_to
+        data_tests: [not_null]
+      - name: is_current
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [series_id, observation_date, valid_from]
+      - expression_is_true:
+          arguments:
+            expression: valid_from <= valid_to
+      - versions_are_contiguous:
+          arguments:
+            key: [series_id, observation_date]
+      - one_current_version:
+          arguments:
+            key: [series_id, observation_date]
+      - consecutive_versions_differ:
+          arguments:
+            key: [series_id, observation_date]
+
+unit_tests:
+  - name: versions_are_numbered_by_valid_from_and_only_the_newest_is_current
+    model: observation_versions
+    given:
+      - input: ref('stg_alfred__observations')
+        rows:
+          - {series_id: TEST, observation_date: "2023-12-01", value: 101.5, valid_from: "2024-03-08", valid_to: "9999-12-31"}
+          - {series_id: TEST, observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "2024-02-07"}
+          - {series_id: TEST, observation_date: "2023-12-01", value: null, valid_from: "2024-02-08", valid_to: "2024-03-07"}
+    expect:
+      rows:
+        - {valid_from: "2024-01-10", version_number: 1, previous_value: null, is_current: false}
+        - {valid_from: "2024-02-08", version_number: 2, previous_value: 100.0, is_current: false}
+        - {valid_from: "2024-03-08", version_number: 3, previous_value: null, is_current: true}

@@ -1,0 +1,21 @@
+version: 2
+
+seeds:
+  - name: series_measures
+    description: >
+      Which headline number to track revisions on for each series. Indexes
+      and chained-dollar series get rebased, which changes every level at
+      once, so their revisions are measured on percent changes, which
+      rebasing leaves roughly intact. Series that are already rates, counts
+      or balances use the value, and payrolls use the monthly change in jobs.
+    columns:
+      - name: series_id
+        data_tests: [unique, not_null]
+      - name: measure
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [value, change, percent_change]
+      - name: revision_units
+        data_tests: [not_null]

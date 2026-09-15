@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: stg_alfred__observations
+    description: The newest bronze snapshot of each series' observations, typed. `value` is NULL where ALFRED shows '.'.
+
+  - name: stg_alfred__vintage_dates
+    description: The newest bronze snapshot of each series' vintage dates.
+    columns:
+      - name: series_id
+        data_tests: [not_null]
+      - name: vintage_date
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [series_id, vintage_date]
+
+  - name: stg_fred__series
+    description: FRED metadata for each series, from its newest bronze snapshot.
+    columns:
+      - name: series_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('series_measures')
+                field: series_id
+      - name: frequency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [W, M, Q]

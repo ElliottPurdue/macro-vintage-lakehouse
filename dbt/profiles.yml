@@ -1,0 +1,18 @@
+macro_lake:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # DuckDB only holds views over the Parquet in the lake, so this file can be deleted at any time.
+      path: "{{ env_var('LAKE_DUCKDB_PATH', 'lake.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+      secrets:
+        - type: s3
+          key_id: "{{ env_var('LAKE_S3_ACCESS_KEY_ID') }}"
+          secret: "{{ env_var('LAKE_S3_SECRET_ACCESS_KEY') }}"
+          region: "{{ env_var('LAKE_S3_REGION', 'us-east-1') }}"
+          endpoint: "{{ env_var('LAKE_S3_ENDPOINT') }}"
+          url_style: "{{ env_var('LAKE_S3_URL_STYLE', 'path') }}"
+          use_ssl: "{{ ('True' if env_var('LAKE_S3_USE_SSL', 'false') | lower in ['1', 'true', 'yes'] else 'False') | as_bool }}"

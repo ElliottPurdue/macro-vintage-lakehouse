@@ -1,0 +1,21 @@
+series_id,label,measure,revision_units
+A191RL1Q225SBEA,Real GDP growth (annualized),value,percentage points
+BOPGSTB,Trade balance,value,millions of dollars
+CES0500000003,Average hourly earnings,percent_change,percentage points
+CPIAUCSL,CPI,percent_change,percentage points
+DGORDER,Durable goods orders,percent_change,percentage points
+DSPIC96,Real disposable income,percent_change,percentage points
+GDP,Nominal GDP,percent_change,percentage points
+GDPC1,Real GDP,percent_change,percentage points
+GDPDEF,GDP price deflator,percent_change,percentage points
+HOUST,Housing starts,value,thousands of units (annual rate)
+ICSA,Initial jobless claims,value,claims
+INDPRO,Industrial production,percent_change,percentage points
+JTSJOL,Job openings,value,thousands of openings
+PAYEMS,Nonfarm payrolls,change,thousands of jobs
+PCEC96,Real consumer spending,percent_change,percentage points
+PCEPI,PCE price index,percent_change,percentage points
+PCEPILFE,Core PCE price index,percent_change,percentage points
+PI,Personal income,percent_change,percentage points
+RSAFS,Retail sales,percent_change,percentage points
+UNRATE,Unemployment rate,value,percentage points

@@ -13,3 +13,10 @@ dist/
 # DuckDB databases
 *.duckdb
 *.duckdb.wal
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.user.yml
+logs/

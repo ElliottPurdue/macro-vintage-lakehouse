@@ -1,0 +1,37 @@
+name: macro_lake
+version: "0.1.0"
+config-version: 2
+profile: macro_lake
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: ["target", "dbt_packages"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+vars:
+  # Revision statistics only count observations first released at least this
+  # many years before their series' newest vintage, so recent observations
+  # that haven't been through annual revisions yet don't dilute them.
+  mature_after_years: 3
+
+models:
+  macro_lake:
+    staging:
+      +materialized: view
+    silver:
+      +materialized: external
+    gold:
+      +materialized: external
+
+seeds:
+  macro_lake:
+    +column_types:
+      series_id: varchar
+      label: varchar
+      measure: varchar
+      revision_units: varchar
