@@ -29,7 +29,8 @@ class LakeSettings:
         return f"s3://{self.bucket}/{path.lstrip('/')}"
 
 
-def _load_env() -> None:
+def load_env() -> None:
+    """Read .env into the environment, so subprocesses such as dbt see it too."""
     load_dotenv(find_dotenv(usecwd=True))
 
 
@@ -43,7 +44,7 @@ def _get(name: str, default: str | None = None) -> str:
 
 
 def load_lake_settings() -> LakeSettings:
-    _load_env()
+    load_env()
     url_style = _get("LAKE_S3_URL_STYLE", "path").lower()
     if url_style not in URL_STYLES:
         raise RuntimeError(f"LAKE_S3_URL_STYLE must be one of {URL_STYLES}, not {url_style!r}")
@@ -59,5 +60,5 @@ def load_lake_settings() -> LakeSettings:
 
 
 def fred_api_key() -> str | None:
-    _load_env()
+    load_env()
     return os.environ.get("FRED_API_KEY", "").strip() or None

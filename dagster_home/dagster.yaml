@@ -1,0 +1,14 @@
+# Dagster's own storage and limits. Point DAGSTER_HOME at this directory,
+# as an absolute path, before running `dagster dev`. Everything Dagster writes
+# here (its run database and logs) is local state and is not version controlled.
+
+telemetry:
+  enabled: false
+
+concurrency:
+  runs:
+    max_concurrent_runs: 4
+  pools:
+    # Assets in the fred_api pool call a free API, so keep the traffic modest
+    # even when every series is backfilled at once.
+    default_limit: 2

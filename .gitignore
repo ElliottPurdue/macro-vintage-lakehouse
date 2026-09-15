@@ -20,3 +20,7 @@ dbt/logs/
 dbt/dbt_packages/
 dbt/.user.yml
 logs/
+
+# Dagster keeps its run database and logs here
+dagster_home/*
+!dagster_home/dagster.yaml

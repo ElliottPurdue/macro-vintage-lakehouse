@@ -6,7 +6,7 @@ This project builds a lakehouse that keeps every published version of every obse
 
 ## Status
 
-Phases 1 to 3 of 5 are done: object storage, incremental ingestion of every ALFRED vintage of 20 series, and dbt models that turn the raw responses into version histories and revision statistics. Dagster scheduling is next.
+Phases 1 to 4 of 5 are done: object storage, incremental ingestion of every ALFRED vintage of 20 series, dbt models that turn the raw responses into version histories and revision statistics, and Dagster to schedule and backfill the lot. CI is next.
 
 ## How versions are stored
 
@@ -83,11 +83,24 @@ where series_id = 'GDPC1'
 
 On 2009-01-30, the day the first estimate landed, 2008 Q4 real GDP was falling 0.96% for the quarter, about 3.8% at an annual rate, which is the number that was in the news that week. Twelve versions later it stands at 2.19% for the quarter, about 8.5% annualized.
 
+## Scheduling and backfills
+
+Dagster holds the ingestion and the models in one graph. Every series is a partition of the three bronze assets, and the dbt models attach to those assets through their sources, so lineage runs from a FRED request to the revision statistics without being wired by hand.
+
+- **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, and the dbt models rebuild as soon as the data they read is updated. The daemon evaluates all ten assets on every tick and launches only what the conditions ask for.
+- **Checks travel with the assets.** Every dbt test appears as an asset check, next to a Python check that each snapshot's newest release date matches the partition it is filed under.
+- **A backfill of all 20 series** ran 20 runs to success in 204 s, two at a time because everything that calls FRED shares one concurrency pool. It made exactly one request per series, wrote nothing, and reported every partition as already current, which is idempotency shown rather than asserted.
+
+```bash
+dagster dev                                              # graph, runs and backfills at 127.0.0.1:3000
+dagster job backfill --job ingest_all_series --all       # re-check every series
+```
+
 ## Tests
 
 - **dbt**: 36 data tests and 2 unit tests, covering the interval rules, the seed, and the arithmetic behind the revision numbers.
-- **Python**: 20 unit tests for the ingestion client and bronze writer, running without a network.
-- **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 16 safeguards on purpose, one at a time, 11 in the ingestion code and 5 in the dbt models, and confirms a test fails each time.
+- **Python**: 31 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
+- **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 17 safeguards on purpose, one at a time, 12 in the Python code and 5 in the dbt models, and confirms a test fails each time.
 
 ## Stack
 
@@ -106,7 +119,7 @@ MinIO was the original choice for storage, but its community edition was archive
 Requires Docker, Python 3.11 or newer, and a free [FRED API key](https://fredaccount.stlouisfed.org/apikeys).
 
 ```bash
-cp .env.example .env                  # set LAKE_S3_SECRET_ACCESS_KEY and FRED_API_KEY
+cp .env.example .env                  # set LAKE_S3_SECRET_ACCESS_KEY, FRED_API_KEY and DAGSTER_HOME
 docker compose up -d --wait
 python -m venv .venv
 source .venv/bin/activate             # Windows: .venv\Scripts\activate
@@ -118,7 +131,7 @@ pytest
 python tools/mutate.py
 ```
 
-dbt doesn't read `.env` itself, which is why it runs through `dotenv`; `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` in `.env` point it at [dbt/](dbt).
+dbt doesn't read `.env` itself, which is why it runs through `dotenv`; `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` in `.env` point it at [dbt/](dbt). Dagster reads `.env` on its own, but needs `DAGSTER_HOME` set to an absolute path, for which [dagster_home/](dagster_home) is the natural choice.
 
 The last line of the first ingest, then of a rerun straight after:
 
@@ -132,7 +145,7 @@ The last line of the first ingest, then of a rerun straight after:
 1. Storage, environment and stack check (done)
 2. Incremental, idempotent ALFRED ingestion into bronze (done)
 3. dbt silver and gold models, with tests on version intervals (done)
-4. Dagster assets, schedules and a backfill
+4. Dagster assets, schedules and a backfill (done)
 5. CI on GitHub Actions against a SeaweedFS service container
 
 ## License and data terms
