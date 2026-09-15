@@ -1,12 +1,14 @@
 # Macro Vintage Lakehouse
 
+[![CI](https://github.com/ElliottPurdue/macro-vintage-lakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/ElliottPurdue/macro-vintage-lakehouse/actions/workflows/ci.yml)
+
 Economic data gets revised. A quarter's first GDP estimate is followed by a second and a third, then changed again in annual and comprehensive updates, and payrolls, retail sales and industrial production are revised the same way. A model or backtest built on today's numbers is using figures nobody had at the time.
 
 This project builds a lakehouse that keeps every published version of every observation, using ALFRED, the archive of past releases kept by the Federal Reserve Bank of St. Louis. Any question can then be asked as of a date: what was known, and when it became known.
 
 ## Status
 
-Phases 1 to 4 of 5 are done: object storage, incremental ingestion of every ALFRED vintage of 20 series, dbt models that turn the raw responses into version histories and revision statistics, and Dagster to schedule and backfill the lot. CI is next.
+All five phases are done: object storage, incremental ingestion of every ALFRED vintage of 20 series, dbt models that turn the raw responses into version histories and revision statistics, Dagster to schedule and backfill the lot, and CI that rebuilds everything on Linux against a real object store.
 
 ## How versions are stored
 
@@ -101,6 +103,7 @@ dagster job backfill --job ingest_all_series --all       # re-check every series
 - **dbt**: 36 data tests and 2 unit tests, covering the interval rules, the seed, and the arithmetic behind the revision numbers.
 - **Python**: 31 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
 - **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 17 safeguards on purpose, one at a time, 12 in the Python code and 5 in the dbt models, and confirms a test fails each time.
+- **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data, and builds every model with its tests on Linux. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
 
 ## Stack
 
@@ -116,7 +119,7 @@ MinIO was the original choice for storage, but its community edition was archive
 
 ## Running it
 
-Requires Docker, Python 3.11 or newer, and a free [FRED API key](https://fredaccount.stlouisfed.org/apikeys).
+Requires Docker and Python 3.11 or newer. A [FRED API key](https://fredaccount.stlouisfed.org/apikeys) is free, and only the real ingestion needs one.
 
 ```bash
 cp .env.example .env                  # set LAKE_S3_SECRET_ACCESS_KEY, FRED_API_KEY and DAGSTER_HOME
@@ -130,6 +133,8 @@ dotenv run -- dbt build               # silver and gold, with their tests
 pytest
 python tools/mutate.py
 ```
+
+Without a key, `python tools/make_fixture_lake.py` fills bronze with synthetic data and everything downstream works the same.
 
 dbt doesn't read `.env` itself, which is why it runs through `dotenv`; `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` in `.env` point it at [dbt/](dbt). Dagster reads `.env` on its own, but needs `DAGSTER_HOME` set to an absolute path, for which [dagster_home/](dagster_home) is the natural choice.
 
@@ -146,7 +151,7 @@ The last line of the first ingest, then of a rerun straight after:
 2. Incremental, idempotent ALFRED ingestion into bronze (done)
 3. dbt silver and gold models, with tests on version intervals (done)
 4. Dagster assets, schedules and a backfill (done)
-5. CI on GitHub Actions against a SeaweedFS service container
+5. CI on GitHub Actions against a SeaweedFS service container (done)
 
 ## License and data terms
 
