@@ -1,0 +1,17 @@
+# Storage and query
+boto3==1.43.95
+duckdb==1.5.5
+polars==1.44.2
+
+# Transformation
+dbt-core==1.12.5
+dbt-duckdb==1.11.0
+
+# Orchestration
+dagster==1.13.22
+dagster-dbt==0.29.22
+dagster-webserver==1.13.22
+
+# Ingestion and settings
+requests==2.34.2
+python-dotenv==1.2.3

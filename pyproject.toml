@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macro-vintage-lakehouse"
+version = "0.1.0"
+description = "Point-in-time lakehouse for revised U.S. macroeconomic data from FRED and ALFRED"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
