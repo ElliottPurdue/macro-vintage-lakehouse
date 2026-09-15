@@ -1,0 +1,30 @@
+# Series pulled from ALFRED with every vintage. All come from U.S. government
+# agencies. Ingestion refuses any series whose FRED notes carry a copyright
+# notice, because the FRED API terms require the owner's permission for those.
+series = [
+  # Output
+  "GDPC1",            # Real GDP, quarterly (BEA)
+  "GDP",              # Nominal GDP, quarterly (BEA)
+  "A191RL1Q225SBEA",  # Real GDP growth, annualized, quarterly (BEA)
+  "GDPDEF",           # GDP implicit price deflator, quarterly (BEA)
+  "INDPRO",           # Industrial production index, monthly (Federal Reserve Board)
+  # Labor
+  "PAYEMS",           # Total nonfarm payrolls, monthly (BLS)
+  "UNRATE",           # Unemployment rate, monthly (BLS)
+  "CES0500000003",    # Average hourly earnings, private, monthly (BLS)
+  "JTSJOL",           # Job openings, monthly (BLS)
+  "ICSA",             # Initial jobless claims, weekly (Department of Labor)
+  # Spending and income
+  "PCEC96",           # Real personal consumption expenditures, monthly (BEA)
+  "RSAFS",            # Advance retail sales, monthly (Census Bureau)
+  "PI",               # Personal income, monthly (BEA)
+  "DSPIC96",          # Real disposable personal income, monthly (BEA)
+  # Prices
+  "CPIAUCSL",         # CPI for all urban consumers, monthly (BLS)
+  "PCEPI",            # PCE price index, monthly (BEA)
+  "PCEPILFE",         # Core PCE price index, monthly (BEA)
+  # Business, housing and trade
+  "DGORDER",          # Durable goods new orders, monthly (Census Bureau)
+  "HOUST",            # Housing starts, monthly (Census Bureau)
+  "BOPGSTB",          # Trade balance, goods and services, monthly (Census Bureau and BEA)
+]
