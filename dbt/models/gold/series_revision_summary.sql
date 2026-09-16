@@ -33,6 +33,8 @@ select
     max(mature.first_release_date) as latest_first_release,
     -- Values arrive as decimal strings, so anything under 1e-9 is float noise.
     avg(case when abs(mature.revision) > 1e-9 then 1.0 else 0.0 end) as share_revised,
+    -- The first estimate and the current value point in opposite directions.
+    avg(case when mature.first_headline * mature.latest_headline < 0 then 1.0 else 0.0 end) as share_sign_flipped,
     avg(abs(mature.revision)) as mean_abs_revision,
     median(abs(mature.revision)) as median_abs_revision,
     avg(mature.revision) as mean_revision,

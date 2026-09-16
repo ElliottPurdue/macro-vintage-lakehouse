@@ -46,8 +46,11 @@ def test_snapshot_keeps_raw_strings_and_lineage():
     key, _ = write(s3)
     frame = pl.read_parquet(io.BytesIO(s3.objects[("lake", key)]))
     assert frame.columns == [
-        "date", "realtime_end", "realtime_start", "value", "_run_id", "_ingested_at", "_content_sha256", "_source",
+        "date", "realtime_end", "realtime_start", "value",
+        "_run_id", "_ingested_at", "_content_sha256", "_source", "_as_of",
     ]
+    # A full pull is recorded as covering everything published so far.
+    assert frame["_as_of"].to_list() == ["9999-12-31", "9999-12-31"]
     assert frame.schema["value"] == pl.String
     assert frame["value"].to_list() == ["100.0", "."]
     assert frame["_content_sha256"][0] == content_digest(ROWS)

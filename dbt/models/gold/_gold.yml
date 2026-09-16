@@ -42,6 +42,11 @@ models:
         data_tests: [unique, not_null]
       - name: share_revised
         description: Share of mature observations whose headline changed after first release.
+      - name: share_sign_flipped
+        description: >
+          Share of mature observations where the first estimate and the current
+          value point in opposite directions, so a decision taken on the first
+          reading would have been made on the wrong sign.
       - name: mean_revision
         description: Average of latest minus first; positive means first releases ran low.
     data_tests:

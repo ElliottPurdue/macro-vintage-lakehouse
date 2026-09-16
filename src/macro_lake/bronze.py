@@ -74,6 +74,7 @@ def write_snapshot(
     run_id: str,
     ingested_at: datetime,
     source: str,
+    as_of: str = "9999-12-31",
 ) -> tuple[str, bool]:
     """Store rows as a snapshot unless identical content is already there.
 
@@ -94,6 +95,9 @@ def write_snapshot(
         pl.lit(ingested_at).alias("_ingested_at"),
         pl.lit(digest).alias("_content_sha256"),
         pl.lit(source).alias("_source"),
+        # The realtime_end the snapshot was asked for: 9999-12-31 for everything
+        # published so far, or a past date for a reconstructed snapshot.
+        pl.lit(as_of, dtype=pl.String).alias("_as_of"),
     )
     buffer = io.BytesIO()
     frame.write_parquet(buffer, compression="zstd")

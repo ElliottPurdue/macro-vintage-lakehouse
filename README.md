@@ -24,15 +24,16 @@ Layers, each written back to object storage as Parquet:
 
 ## Bronze
 
-Measured on 2026-09-15:
+Measured on 2026-09-16:
 
 - **20 series** from BEA, BLS, the Census Bureau, the Department of Labor and the Federal Reserve Board, listed in [config/series.toml](config/series.toml)
-- **158,307 version rows**, covering 15,860 observations and 10,794 vintage dates
-- **60 Parquet objects**, 1.1 MB in total
+- **100 snapshots, 775,029 rows, 5.5 MB across 300 Parquet objects.** Five snapshots per series: the current one, plus four rebuilt as ALFRED reported that series on 2024-06-28, 2025-01-31, 2025-06-30 and 2026-01-30.
+- **The newest snapshot of each series** carries 158,307 version rows, covering 15,860 observations and 10,794 release dates. That is what the models read.
 
 How ingestion stays cheap and safe to rerun:
 
 - **It downloads only what changed.** One request per series asks ALFRED for its newest vintage date, and the series is pulled only if that date is newer than the newest snapshot in bronze. The first pull took 80 requests in 40.2 s. A rerun straight after took 20 requests in 9.9 s and wrote nothing.
+- **Any past date can be rebuilt.** `--as-of 2025-06-30` stores each series as ALFRED reported it that day, and records the real-time window it asked for, so a reconstructed snapshot is never mistaken for a current one.
 - **Snapshots are content-addressed.** Objects live under `series_id=.../vintage_through=...` partitions and are named by a hash of their content, so identical data is never written twice. A forced re-download of GDPC1 and PAYEMS wrote nothing.
 - **Values stay raw, with lineage.** Values are stored exactly as the API sent them, as strings with `.` for a missing value, next to the run id, ingest time, content hash and source request.
 - **Pulls are checked before anything is written.** Pages must add up to the count the API reports, a pull whose observations and vintage dates end on different releases fails, and a series whose FRED notes carry a copyright notice is refused.
@@ -40,7 +41,7 @@ How ingestion stays cheap and safe to rerun:
 
 ## Silver and gold
 
-dbt Core reads bronze through DuckDB and writes Parquet back to the lake, so object storage stays the source of truth and DuckDB is only the engine. A full build takes 1.3 s.
+dbt Core reads bronze through DuckDB and writes Parquet back to the lake, so object storage stays the source of truth and DuckDB is only the engine. A full build is 53 nodes in 2.2 s.
 
 `silver/observation_versions.parquet` holds all 158,307 versions, sorted by series and date so readers can skip row groups. Its tests are the interval rules that the rest of the project depends on, and every one of them holds across all 20 series:
 
@@ -53,6 +54,14 @@ dbt Core reads bronze through DuckDB and writes Parquet back to the lake, so obj
 `gold/release_revisions.parquet` compares each observation's first release with the newest one. What counts as the headline number is set per series in [dbt/seeds/series_measures.csv](dbt/seeds/series_measures.csv): the value itself for rates and counts, the monthly change for payrolls, and the percent change for levels and indexes. That last choice matters, because indexes and chained-dollar series get rebased: 2008 Q4 real GDP reads 11,599.4 in the January 2009 vintage and 16,485.35 today, but almost all of that gap is the switch to 2017 dollars, not revision. Percent changes survive rebasing; levels do not.
 
 A change is always computed against the previous period as it was known on the same day, so a first release is never compared with a later revision of its neighbor.
+
+## Does the source rewrite its own history?
+
+Everything here assumes ALFRED never alters a value it has already superseded. If it did, every answer given before the change would quietly become wrong, and nothing in the data itself would say so.
+
+That is why bronze keeps snapshots rather than a single current view. `history_rewrites` compares every older snapshot against the newest one: a version that had already been superseded must still read exactly as it did, and a version that was still current back then must still exist and must not now be shown as having ended before that snapshot was taken. Across four reconstructed snapshots of all 20 series, it finds nothing, which is the answer you want.
+
+A check that has never failed is not known to be capable of failing, so a dbt unit test hands it a snapshot whose value was altered after the fact and asserts that it reports it.
 
 ## What the data shows
 
@@ -72,6 +81,8 @@ Revisions are measured over mature observations: those first released at least t
 Eleven of the twenty series have revised every mature observation at least once. Industrial production carries the most versions, 31.2 per observation on average; the unemployment rate carries 2.4.
 
 Payrolls show the pattern that matters to anyone trading or modelling on the release: the first estimate of a month's job growth lands 18,600 jobs below its final value on average, and half of all months move by more than 61,500 jobs. March 2020 was first reported as 701,000 jobs lost and now reads 1,398,000.
+
+**Often the revision changes the sign, not just the size.** In 110 of 1,050 months, payrolls were first reported as growing when they now read as shrinking, or the other way round. Retail sales flipped in 62 of 414 months, and real consumer spending in 48 of 234. December 2020 was first reported as a decline in both retail sales and consumer spending, and both now read as increases. `series_revision_summary` carries that share for every series.
 
 Asking what was known on a date is a filter on one column pair:
 
@@ -100,9 +111,9 @@ dagster job backfill --job ingest_all_series --all       # re-check every series
 
 ## Tests
 
-- **dbt**: 36 data tests and 2 unit tests, covering the interval rules, the seed, and the arithmetic behind the revision numbers.
-- **Python**: 31 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
-- **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 17 safeguards on purpose, one at a time, 12 in the Python code and 5 in the dbt models, and confirms a test fails each time.
+- **dbt**: 41 data tests and 3 unit tests, covering the interval rules, the seed, the arithmetic behind the revision numbers, and the history check's own ability to fail.
+- **Python**: 34 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
+- **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 20 safeguards on purpose, one at a time, 13 in the Python code and 7 in the dbt models, and confirms a test fails each time.
 - **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data, and builds every model with its tests on Linux. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
 
 ## Stack
@@ -122,14 +133,15 @@ MinIO was the original choice for storage, but its community edition was archive
 Requires Docker and Python 3.11 or newer. A [FRED API key](https://fredaccount.stlouisfed.org/apikeys) is free, and only the real ingestion needs one.
 
 ```bash
-cp .env.example .env                  # set LAKE_S3_SECRET_ACCESS_KEY, FRED_API_KEY and DAGSTER_HOME
+cp .env.example .env                    # set LAKE_S3_SECRET_ACCESS_KEY, FRED_API_KEY and DAGSTER_HOME
 docker compose up -d --wait
 python -m venv .venv
-source .venv/bin/activate             # Windows: .venv\Scripts\activate
+source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-python -m macro_lake.check_stack      # storage, DuckDB and the FRED key
-python -m macro_lake.ingest           # every series in config/series.toml
-dotenv run -- dbt build               # silver and gold, with their tests
+python -m macro_lake.check_stack        # storage, DuckDB and the FRED key
+python -m macro_lake.ingest             # every series in config/series.toml
+python -m macro_lake.ingest --as-of 2025-06-30   # the same series as they stood that day
+dotenv run -- dbt build                 # silver and gold, with their tests
 pytest
 python tools/mutate.py
 ```

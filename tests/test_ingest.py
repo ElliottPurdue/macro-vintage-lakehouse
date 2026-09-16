@@ -27,21 +27,32 @@ class FakeAlfred:
         self._notes = notes
         self.calls = []
 
-    def latest_vintage_date(self, series_id):
+    def _visible(self, as_of):
+        """What ALFRED returns for a real-time window ending on as_of."""
+        if as_of is None:
+            return list(self._observations), list(self._vintage_dates)
+        rows = [
+            {**row, "realtime_end": min(row["realtime_end"], as_of)}
+            for row in self._observations
+            if row["realtime_start"] <= as_of
+        ]
+        return rows, [vintage for vintage in self._vintage_dates if vintage <= as_of]
+
+    def latest_vintage_date(self, series_id, as_of=None):
         self.calls.append("latest_vintage_date")
-        return max(self._vintage_dates)
+        return max(self._visible(as_of)[1])
 
     def series(self, series_id):
         self.calls.append("series")
         return {"id": series_id, "notes": self._notes, "popularity": 42}
 
-    def observations_all_vintages(self, series_id):
+    def observations_all_vintages(self, series_id, as_of=None):
         self.calls.append("observations_all_vintages")
-        return list(self._observations)
+        return self._visible(as_of)[0]
 
-    def vintage_dates(self, series_id):
+    def vintage_dates(self, series_id, as_of=None):
         self.calls.append("vintage_dates")
-        return list(self._vintage_dates)
+        return self._visible(as_of)[1]
 
 
 def ingest(alfred, s3, **options):
@@ -82,6 +93,24 @@ def test_forced_download_of_unchanged_data_writes_nothing():
     assert (result.status, result.objects_written) == ("unchanged", 0)
     assert alfred.calls.count("observations_all_vintages") == 2
     assert s3.puts == 3
+
+
+def test_an_as_of_pull_rebuilds_a_past_snapshot_beside_the_current_one():
+    s3 = FakeS3()
+    alfred = FakeAlfred(AFTER_REVISION, ["2024-01-10", "2024-02-08"])
+    ingest(alfred, s3)
+    result = ingest(alfred, s3, as_of="2024-01-31")
+    assert (result.status, result.vintage_through, result.rows) == ("new", "2024-01-10", 1)
+    partitions = {key.split("vintage_through=")[1].split("/")[0] for key in s3.keys() if key.startswith(bronze.OBSERVATIONS)}
+    assert partitions == {"2024-01-10", "2024-02-08"}
+
+
+def test_repeating_an_as_of_pull_writes_nothing():
+    s3, alfred = FakeS3(), FakeAlfred(AFTER_REVISION, ["2024-01-10", "2024-02-08"])
+    ingest(alfred, s3, as_of="2024-01-31")
+    written = s3.puts
+    result = ingest(alfred, s3, as_of="2024-01-31")
+    assert (result.status, result.objects_written, s3.puts) == ("unchanged", 0, written)
 
 
 def test_series_with_a_copyright_notice_is_refused():

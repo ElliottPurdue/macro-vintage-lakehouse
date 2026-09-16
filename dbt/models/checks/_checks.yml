@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: history_rewrites
+    description: >
+      Rows where the source changed data it had already published, found by
+      comparing every older snapshot with the newest one. It is expected to be
+      empty, and the unit test below feeds it a rewritten value to prove it can
+      still find one.
+    data_tests:
+      - is_empty
+
+unit_tests:
+  - name: a_value_changed_after_the_fact_is_reported
+    model: history_rewrites
+    given:
+      - input: ref('stg_alfred__observation_snapshots')
+        rows:
+          # The newest snapshot: a full pull, so it is open ended.
+          - {series_id: TEST, snapshot_vintage_through: "2024-02-08", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-02-08 12:00:00", observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "2024-02-07"}
+          - {series_id: TEST, snapshot_vintage_through: "2024-02-08", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-02-08 12:00:00", observation_date: "2023-12-01", value: 101.5, valid_from: "2024-02-08", valid_to: "9999-12-31"}
+          # An older snapshot holding a different value for the same version.
+          - {series_id: TEST, snapshot_vintage_through: "2024-01-10", snapshot_as_of: "2024-01-31", snapshot_sha256: old, snapshot_ingested_at: "2024-01-31 12:00:00", observation_date: "2023-12-01", value: 99.0, valid_from: "2024-01-10", valid_to: "2024-01-31"}
+    expect:
+      rows:
+        - {series_id: TEST, observation_date: "2023-12-01", valid_from: "2024-01-10", value_then: 99.0, value_now: 100.0, problem: value changed after the fact}

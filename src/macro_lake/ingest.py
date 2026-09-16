@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from macro_lake import bronze
-from macro_lake.fred import ALL_VINTAGES, FredClient
+from macro_lake.fred import FredClient, vintage_window
 from macro_lake.settings import fred_api_key, load_lake_settings
 from macro_lake.storage import s3_client
 
@@ -57,10 +57,13 @@ def ingest_series(
     run_id: str,
     ingested_at: datetime,
     force: bool = False,
+    as_of: str | None = None,
 ) -> SeriesResult:
-    latest = client.latest_vintage_date(series_id)
+    latest = client.latest_vintage_date(series_id, as_of=as_of)
     stored = bronze.latest_vintage_through(s3, bucket, bronze.OBSERVATIONS, series_id)
-    if stored is not None and stored >= latest and not force:
+    # An as-of pull rebuilds a past snapshot, so the newest one in bronze says
+    # nothing about whether it is already stored. Content addressing settles that.
+    if as_of is None and stored is not None and stored >= latest and not force:
         detail = "" if stored == latest else f"bronze holds {stored}, newer than ALFRED's latest {latest}"
         return SeriesResult(series_id, "current", stored, detail=detail)
 
@@ -68,8 +71,8 @@ def ingest_series(
     if "copyright" in (info.get("notes") or "").lower():
         return SeriesResult(series_id, "refused", detail="FRED notes carry a copyright notice")
 
-    observations = client.observations_all_vintages(series_id)
-    vintage_dates = client.vintage_dates(series_id)
+    observations = client.observations_all_vintages(series_id, as_of=as_of)
+    vintage_dates = client.vintage_dates(series_id, as_of=as_of)
     if not observations or not vintage_dates:
         raise IngestError(f"got {len(observations)} observations and {len(vintage_dates)} vintage dates")
     newest_vintage = max(vintage_dates)
@@ -79,7 +82,8 @@ def ingest_series(
         # fetched before a new release and the other after it; rerun later.
         raise IngestError(f"newest realtime_start {newest_start} does not match newest vintage date {newest_vintage}")
 
-    window = f"realtime_start={ALL_VINTAGES['realtime_start']}&realtime_end={ALL_VINTAGES['realtime_end']}"
+    requested = vintage_window(as_of)
+    window = f"realtime_start={requested['realtime_start']}&realtime_end={requested['realtime_end']}"
     snapshots = [
         (bronze.SERIES, [info], f"fred/series?series_id={series_id}"),
         (
@@ -93,7 +97,16 @@ def ingest_series(
     created = {}
     for dataset, rows, source in snapshots:
         _, created[dataset] = bronze.write_snapshot(
-            s3, bucket, dataset, series_id, newest_vintage, rows, run_id=run_id, ingested_at=ingested_at, source=source
+            s3,
+            bucket,
+            dataset,
+            series_id,
+            newest_vintage,
+            rows,
+            run_id=run_id,
+            ingested_at=ingested_at,
+            source=source,
+            as_of=requested["realtime_end"],
         )
     return SeriesResult(
         series_id,
@@ -131,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("series", nargs="*", help="series ids to pull (default: every series in the config)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="TOML file listing series ids")
     parser.add_argument("--force", action="store_true", help="download even when bronze already has the latest vintage")
+    parser.add_argument(
+        "--as-of",
+        metavar="YYYY-MM-DD",
+        help="store each series as it stood on this date instead of now, rebuilding a past snapshot",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -151,7 +169,14 @@ def main(argv: list[str] | None = None) -> int:
     for series_id in series_ids:
         try:
             result = ingest_series(
-                client, s3, settings.bucket, series_id, run_id=run_id, ingested_at=ingested_at, force=args.force
+                client,
+                s3,
+                settings.bucket,
+                series_id,
+                run_id=run_id,
+                ingested_at=ingested_at,
+                force=args.force,
+                as_of=args.as_of,
             )
         except Exception as exc:  # one failing series should not stop the rest
             result = SeriesResult(series_id, "failed", detail=str(exc))

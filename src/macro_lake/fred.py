@@ -16,8 +16,16 @@ import requests
 
 BASE_URL = "https://api.stlouisfed.org/fred"
 
-# The widest real-time window the API accepts, which returns every vintage.
-ALL_VINTAGES = {"realtime_start": "1776-07-04", "realtime_end": "9999-12-31"}
+# ALFRED's real-time bounds. Asking for everything up to a past date returns the
+# series exactly as it stood on that date, with the periods that were current
+# then reported as ending on it rather than as open.
+EARLIEST_REALTIME = "1776-07-04"
+OPEN_REALTIME = "9999-12-31"
+
+
+def vintage_window(as_of: str | None = None) -> dict[str, str]:
+    """Every vintage, or every vintage published on or before as_of."""
+    return {"realtime_start": EARLIEST_REALTIME, "realtime_end": as_of or OPEN_REALTIME}
 
 OBSERVATIONS_PAGE_LIMIT = 100_000  # API maximum for series/observations
 VINTAGE_DATES_PAGE_LIMIT = 10_000  # API maximum for series/vintagedates
@@ -63,22 +71,32 @@ class FredClient:
             raise FredError(f"series ({series_id}): expected one series, got {len(seriess)}")
         return seriess[0]
 
-    def latest_vintage_date(self, series_id: str) -> str:
-        body = self._get("series/vintagedates", series_id=series_id, sort_order="desc", limit=1, **ALL_VINTAGES)
+    def latest_vintage_date(self, series_id: str, as_of: str | None = None) -> str:
+        body = self._get(
+            "series/vintagedates", series_id=series_id, sort_order="desc", limit=1, **vintage_window(as_of)
+        )
         if not body["vintage_dates"]:
             raise FredError(f"series/vintagedates ({series_id}): no vintage dates")
         return body["vintage_dates"][0]
 
-    def vintage_dates(self, series_id: str) -> list[str]:
+    def vintage_dates(self, series_id: str, as_of: str | None = None) -> list[str]:
         """Every date on which the series' values were revised or new values released."""
         return self._paged(
-            "series/vintagedates", "vintage_dates", VINTAGE_DATES_PAGE_LIMIT, series_id=series_id, **ALL_VINTAGES
+            "series/vintagedates",
+            "vintage_dates",
+            VINTAGE_DATES_PAGE_LIMIT,
+            series_id=series_id,
+            **vintage_window(as_of),
         )
 
-    def observations_all_vintages(self, series_id: str) -> list[dict[str, str]]:
+    def observations_all_vintages(self, series_id: str, as_of: str | None = None) -> list[dict[str, str]]:
         """Every value the series has published, each with the real-time period it was current."""
         return self._paged(
-            "series/observations", "observations", OBSERVATIONS_PAGE_LIMIT, series_id=series_id, **ALL_VINTAGES
+            "series/observations",
+            "observations",
+            OBSERVATIONS_PAGE_LIMIT,
+            series_id=series_id,
+            **vintage_window(as_of),
         )
 
     def _paged(self, endpoint: str, key: str, page_limit: int, **params: Any) -> list[Any]:

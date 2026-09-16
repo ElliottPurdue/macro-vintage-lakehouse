@@ -7,6 +7,12 @@
 {% endtest %}
 
 
+{# For models that exist to collect problems: any row at all is a failure. #}
+{% test is_empty(model) %}
+    select * from {{ model }}
+{% endtest %}
+
+
 {# Rows where the SQL expression is false or NULL. #}
 {% test expression_is_true(model, expression) %}
     select *

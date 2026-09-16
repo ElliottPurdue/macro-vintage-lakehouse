@@ -35,6 +35,13 @@ def test_pages_through_every_vintage():
         assert (params["api_key"], params["file_type"]) == (KEY, "json")
 
 
+def test_an_as_of_date_narrows_the_real_time_window():
+    client, session, _ = make_client([observations_page(ROWS[:1], 1)])
+    client.observations_all_vintages("TEST", as_of="2024-06-28")
+    _, params = session.calls[0]
+    assert (params["realtime_start"], params["realtime_end"]) == ("1776-07-04", "2024-06-28")
+
+
 def test_count_changing_between_pages_is_an_error():
     client, _, _ = make_client([observations_page(ROWS[:3], 5), observations_page(ROWS[3:], 6)])
     with pytest.raises(FredError, match="count changed from 5 to 6"):

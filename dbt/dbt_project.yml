@@ -23,6 +23,8 @@ models:
   macro_lake:
     staging:
       +materialized: view
+    checks:
+      +materialized: view
     silver:
       +materialized: external
     gold:

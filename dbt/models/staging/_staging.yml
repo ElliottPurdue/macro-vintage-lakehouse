@@ -1,6 +1,24 @@
 version: 2
 
 models:
+  - name: stg_alfred__observation_snapshots
+    description: >
+      Every bronze snapshot of every series, typed. The same observation appears
+      once per snapshot that holds it, which is what the closed-history test
+      compares.
+    columns:
+      - name: series_id
+        data_tests: [not_null]
+      - name: snapshot_as_of
+        description: The realtime_end the snapshot was pulled with; 9999-12-31 for a full pull.
+        data_tests: [not_null]
+      - name: valid_from
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [series_id, snapshot_sha256, observation_date, valid_from]
+
   - name: stg_alfred__observations
     description: The newest bronze snapshot of each series' observations, typed. `value` is NULL where ALFRED shows '.'.
 

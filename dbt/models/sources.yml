@@ -5,7 +5,8 @@ sources:
     description: >
       Raw API responses written by `python -m macro_lake.ingest`: one
       content-addressed Parquet snapshot per series per vintage, with every
-      source column kept as the string the API sent.
+      source column kept as the string the API sent. union_by_name lets
+      snapshots written by different versions of the writer be read together.
     config:
       loaded_at_field: _ingested_at
       freshness:
@@ -15,12 +16,12 @@ sources:
       - name: alfred_observations
         description: Every value each series has published, with the real-time period it was current.
         config:
-          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/alfred/observations/*/*/*.parquet', hive_partitioning = true)"
+          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/alfred/observations/*/*/*.parquet', hive_partitioning = true, union_by_name = true)"
       - name: alfred_vintage_dates
         description: Every date on which each series' values were revised or new values released.
         config:
-          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/alfred/vintage_dates/*/*/*.parquet', hive_partitioning = true)"
+          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/alfred/vintage_dates/*/*/*.parquet', hive_partitioning = true, union_by_name = true)"
       - name: fred_series
         description: FRED metadata for each series as of the snapshot.
         config:
-          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/fred/series/*/*/*.parquet', hive_partitioning = true)"
+          external_location: "read_parquet('s3://{{ env_var('LAKE_S3_BUCKET') }}/bronze/fred/series/*/*/*.parquet', hive_partitioning = true, union_by_name = true)"
