@@ -98,23 +98,68 @@ On 2009-01-30, the day the first estimate landed, 2008 Q4 real GDP was falling 0
 
 ## Scheduling and backfills
 
-Dagster holds the ingestion and the models in one graph. Every series is a partition of the three bronze assets, and the dbt models attach to those assets through their sources, so lineage runs from a FRED request to the revision statistics without being wired by hand.
+Dagster holds the ingestion and the models in one graph. Every series is a partition of the three bronze assets, and the dbt models attach to those assets through their sources, so lineage runs from a FRED request to the revision statistics without being wired by hand. The diagram below is generated from the definitions by [tools/asset_graph.py](tools/asset_graph.py), taking the model half from the dbt manifest, so it cannot drift from what actually runs.
+
+```mermaid
+flowchart LR
+    subgraph bronze[bronze, written by the ingestion]
+        bronze_alfred_observations["bronze/alfred_observations"]
+        bronze_alfred_vintage_dates["bronze/alfred_vintage_dates"]
+        bronze_fred_series["bronze/fred_series"]
+    end
+    subgraph staging[staging]
+        stg_alfred__observation_snapshots["stg_alfred__observation_snapshots"]
+        stg_alfred__observations["stg_alfred__observations"]
+        stg_alfred__vintage_dates["stg_alfred__vintage_dates"]
+        stg_fred__series["stg_fred__series"]
+    end
+    subgraph silver[silver]
+        observation_versions["observation_versions"]
+    end
+    subgraph gold[gold]
+        release_revisions["release_revisions"]
+        series_revision_summary["series_revision_summary"]
+    end
+    subgraph checks[checks]
+        history_rewrites["history_rewrites"]
+    end
+    subgraph seeds[seeds]
+        series_measures["series_measures"]
+    end
+    stg_alfred__observation_snapshots --> history_rewrites
+    stg_alfred__observations --> observation_versions
+    observation_versions --> release_revisions
+    series_measures --> release_revisions
+    stg_fred__series --> release_revisions
+    release_revisions --> series_revision_summary
+    series_measures --> series_revision_summary
+    stg_alfred__vintage_dates --> series_revision_summary
+    bronze_alfred_observations --> stg_alfred__observation_snapshots
+    stg_alfred__observation_snapshots --> stg_alfred__observations
+    bronze_alfred_vintage_dates --> stg_alfred__vintage_dates
+    bronze_fred_series --> stg_fred__series
+```
 
 - **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, and the dbt models rebuild as soon as the data they read is updated. The daemon evaluates all ten assets on every tick and launches only what the conditions ask for.
 - **Checks travel with the assets.** Every dbt test appears as an asset check, next to a Python check that each snapshot's newest release date matches the partition it is filed under.
 - **A backfill of all 20 series** ran 20 runs to success in 204 s, two at a time because everything that calls FRED shares one concurrency pool. It made exactly one request per series, wrote nothing, and reported every partition as already current, which is idempotency shown rather than asserted.
+- **The schedule has been watched firing.** Pointing the cron a few minutes ahead with `MACRO_LAKE_INGEST_CRON` had the daemon request all 20 series by itself; all 20 runs succeeded, and the models then rebuilt on their own because their inputs had changed.
 
 ```bash
 dagster dev                                              # graph, runs and backfills at 127.0.0.1:3000
 dagster job backfill --job ingest_all_series --all       # re-check every series
+MACRO_LAKE_INGEST_CRON="*/5 * * * *" dagster dev         # watch the schedule work now
 ```
+
+That first demonstration failed, which is the argument for running it at all. The dbt run the daemon launched could not see the seed table, because the DuckDB path in the profile was relative: a Dagster run does not start in the same directory a shell does, so two databases existed, one of them missing everything built from the other. The path is pinned to the repository now, and a test asserts it is absolute.
 
 ## Tests
 
 - **dbt**: 41 data tests and 3 unit tests, covering the interval rules, the seed, the arithmetic behind the revision numbers, and the history check's own ability to fail.
-- **Python**: 34 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
+- **Python**: 35 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
 - **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 20 safeguards on purpose, one at a time, 13 in the Python code and 7 in the dbt models, and confirms a test fails each time.
-- **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data, and builds every model with its tests on Linux. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
+- **Freshness**: `dbt source freshness` warns if bronze has not been written to in 10 days and fails at 35, so a pipeline that quietly stopped running shows up as stale data rather than as silence.
+- **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data covering two snapshots per series, builds every model with its tests on Linux, and breaks the model safeguards there too. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
 
 ## Stack
 
@@ -142,6 +187,7 @@ python -m macro_lake.check_stack        # storage, DuckDB and the FRED key
 python -m macro_lake.ingest             # every series in config/series.toml
 python -m macro_lake.ingest --as-of 2025-06-30   # the same series as they stood that day
 dotenv run -- dbt build                 # silver and gold, with their tests
+dotenv run -- dbt source freshness      # how long since bronze was last written
 pytest
 python tools/mutate.py
 ```

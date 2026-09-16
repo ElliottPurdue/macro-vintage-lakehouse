@@ -24,6 +24,11 @@ from macro_lake.storage import s3_client
 OPEN_ENDED = "9999-12-31"
 RUN_ID = "fixture"
 
+# Each series is written twice: once complete, and once as it would have read on
+# this date, so the models see the same multi-snapshot shape that real as-of
+# pulls produce and the history check has something to compare.
+FIXTURE_AS_OF = "2024-06-28"
+
 
 def add_months(day: date, months: int) -> date:
     month = day.month - 1 + months
@@ -131,6 +136,15 @@ def observation_rows(spec: dict) -> list[dict[str, str]]:
     return rows
 
 
+def as_of_rows(rows: list[dict[str, str]], as_of: str) -> list[dict[str, str]]:
+    """The rows as ALFRED would have reported them on as_of, with current periods clipped to it."""
+    return [
+        {**row, "realtime_end": min(row["realtime_end"], as_of)}
+        for row in rows
+        if row["realtime_start"] <= as_of
+    ]
+
+
 def series_row(spec: dict, vintage_through: str) -> dict[str, str]:
     return {
         "id": spec["series_id"],
@@ -166,31 +180,35 @@ def main() -> int:
 
     written = 0
     for spec in SERIES:
-        rows = observation_rows(spec)
-        vintages = sorted({row["realtime_start"] for row in rows})
-        vintage_through = vintages[-1]
-        snapshots = [
-            (bronze.SERIES, [series_row(spec, vintage_through)]),
-            (bronze.VINTAGE_DATES, [{"vintage_date": vintage} for vintage in vintages]),
-            (bronze.OBSERVATIONS, rows),
-        ]
-        for dataset, dataset_rows in snapshots:
-            _, created = bronze.write_snapshot(
-                s3,
-                settings.bucket,
-                dataset,
-                spec["series_id"],
-                vintage_through,
-                dataset_rows,
-                run_id=RUN_ID,
-                ingested_at=ingested_at,
-                source="synthetic fixture",
+        every_version = observation_rows(spec)
+        for as_of in (OPEN_ENDED, FIXTURE_AS_OF):
+            rows = every_version if as_of == OPEN_ENDED else as_of_rows(every_version, as_of)
+            vintages = sorted({row["realtime_start"] for row in rows})
+            vintage_through = vintages[-1]
+            snapshots = [
+                (bronze.SERIES, [series_row(spec, vintage_through)]),
+                (bronze.VINTAGE_DATES, [{"vintage_date": vintage} for vintage in vintages]),
+                (bronze.OBSERVATIONS, rows),
+            ]
+            for dataset, dataset_rows in snapshots:
+                _, created = bronze.write_snapshot(
+                    s3,
+                    settings.bucket,
+                    dataset,
+                    spec["series_id"],
+                    vintage_through,
+                    dataset_rows,
+                    run_id=RUN_ID,
+                    ingested_at=ingested_at,
+                    source="synthetic fixture",
+                    as_of=as_of,
+                )
+                written += created
+            label = "current" if as_of == OPEN_ENDED else f"as of {as_of}"
+            print(
+                f"{spec['series_id']:<8} {label:<17} {len(rows):>5} versions "
+                f"{len(vintages):>4} vintage dates through {vintage_through}"
             )
-            written += created
-        print(
-            f"{spec['series_id']:<8} {len(spec['periods']):>4} periods "
-            f"{len(rows):>5} versions {len(vintages):>4} vintage dates through {vintage_through}"
-        )
     print(f"{written} objects written to s3://{settings.bucket}")
     return 0
 

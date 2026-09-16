@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from dagster import AssetKey, Definitions
@@ -14,6 +15,12 @@ def parents_of(name: str) -> set[AssetKey]:
 
 def test_definitions_are_loadable():
     Definitions.validate_loadable(defs)
+
+
+def test_the_duckdb_path_cannot_depend_on_the_working_directory():
+    # A relative path gives a shell and a Dagster run two different databases,
+    # which showed up as a scheduled run whose models could not see the seed.
+    assert Path(os.environ["LAKE_DUCKDB_PATH"]).is_absolute()
 
 
 def test_every_configured_series_is_a_partition():

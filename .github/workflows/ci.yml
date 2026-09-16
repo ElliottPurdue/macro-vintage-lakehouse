@@ -78,6 +78,8 @@ jobs:
         run: python tools/make_fixture_lake.py
       - name: Build the models and run their tests
         run: dbt build
+      - name: Break the model safeguards and check a test notices
+        run: python tools/mutate.py --only dbt
       - name: Show what the models produced
         run: |
           python - <<'PY'

@@ -42,11 +42,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 load_env()
 
+# dbt resolves a relative database path against the working directory, and a
+# Dagster run does not start in the same directory a shell does. Pinning it to
+# the repository keeps every process on one database.
+os.environ.setdefault("LAKE_DUCKDB_PATH", str(REPO_ROOT / "lake.duckdb"))
+
 SERIES_IDS = load_series_ids(REPO_ROOT / "config" / "series.toml")
 series_partitions = StaticPartitionsDefinition(SERIES_IDS)
 
 # Weekday mornings, after the 8:30 Eastern releases most of these series follow.
-INGEST_CRON = "15 9 * * 1-5"
+# MACRO_LAKE_INGEST_CRON overrides it, which is how the schedule can be watched
+# working without waiting for the morning.
+INGEST_CRON = os.environ.get("MACRO_LAKE_INGEST_CRON", "15 9 * * 1-5")
 
 # Asset keys that match the dbt sources in dbt/models/sources.yml, which is
 # what joins the ingestion to the models in one graph.
