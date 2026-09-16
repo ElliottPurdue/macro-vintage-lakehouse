@@ -55,7 +55,7 @@ MUTATIONS = [
      "unchanged re-download reported as new"),
     ("pytest", "src/macro_lake/definitions.py", 'AssetKey(["bronze", "alfred_observations"])',
      'AssetKey(["bronze", "observations"])', "bronze asset key no longer matches the dbt source"),
-    ("dbt", "dbt/models/staging/stg_alfred__observations.sql", "cast(realtime_end as date) as valid_to",
+    ("dbt", "dbt/models/staging/stg_alfred__observation_snapshots.sql", "cast(realtime_end as date) as valid_to",
      "cast(realtime_end as date) + 1 as valid_to", "version intervals stretched by a day"),
     ("dbt", "dbt/models/silver/observation_versions.sql", "order by valid_from)", "order by valid_from desc)",
      "versions numbered newest first"),
