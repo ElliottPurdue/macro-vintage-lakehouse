@@ -24,3 +24,33 @@ unit_tests:
     expect:
       rows:
         - {series_id: TEST, observation_date: "2023-12-01", valid_from: "2024-01-10", value_then: 99.0, value_now: 100.0, problem: value changed after the fact}
+
+  # The first real release after this check was written failed it: a version an
+  # earlier full pull showed as current had since been revised, which was read as
+  # the source ending it before the pull.
+  - name: a_release_after_an_earlier_full_pull_is_not_a_rewrite
+    model: history_rewrites
+    given:
+      - input: ref('stg_alfred__observation_snapshots')
+        rows:
+          # The newest pull, after the 2024-02-08 release revised December.
+          - {series_id: TEST, snapshot_vintage_through: "2024-02-08", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-02-09 12:00:00", observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "2024-02-07"}
+          - {series_id: TEST, snapshot_vintage_through: "2024-02-08", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-02-09 12:00:00", observation_date: "2023-12-01", value: 101.5, valid_from: "2024-02-08", valid_to: "9999-12-31"}
+          # A full pull from before that release, when the first value was current.
+          - {series_id: TEST, snapshot_vintage_through: "2024-01-10", snapshot_as_of: "9999-12-31", snapshot_sha256: old, snapshot_ingested_at: "2024-01-20 12:00:00", observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "9999-12-31"}
+    expect:
+      rows: []
+
+  - name: a_full_pull_version_now_ending_before_that_pull_is_reported
+    model: history_rewrites
+    given:
+      - input: ref('stg_alfred__observation_snapshots')
+        rows:
+          - {series_id: TEST, snapshot_vintage_through: "2024-03-07", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-03-08 12:00:00", observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "2024-01-31"}
+          - {series_id: TEST, snapshot_vintage_through: "2024-03-07", snapshot_as_of: "9999-12-31", snapshot_sha256: new, snapshot_ingested_at: "2024-03-08 12:00:00", observation_date: "2023-12-01", value: 101.5, valid_from: "2024-02-01", valid_to: "9999-12-31"}
+          # This pull had seen releases through 2024-02-08 and still showed the
+          # first value as current, so it cannot have ended on 2024-01-31.
+          - {series_id: TEST, snapshot_vintage_through: "2024-02-08", snapshot_as_of: "9999-12-31", snapshot_sha256: old, snapshot_ingested_at: "2024-02-09 12:00:00", observation_date: "2023-12-01", value: 100.0, valid_from: "2024-01-10", valid_to: "9999-12-31"}
+    expect:
+      rows:
+        - {series_id: TEST, observation_date: "2023-12-01", valid_from: "2024-01-10", problem: a version current then is now shown as having ended before the snapshot}

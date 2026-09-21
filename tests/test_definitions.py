@@ -1,7 +1,8 @@
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dagster import AssetKey, Definitions
+from dagster import AssetKey, AssetMaterialization, DagsterInstance, Definitions, evaluate_automation_conditions
 
 from macro_lake.definitions import alfred_snapshots, defs, series_partitions
 from macro_lake.ingest import load_series_ids
@@ -45,3 +46,24 @@ def test_ingestion_writes_exactly_the_assets_the_dbt_sources_read():
 def test_gold_is_built_from_silver():
     assert AssetKey("observation_versions") in parents_of("release_revisions")
     assert AssetKey("release_revisions") in parents_of("series_revision_summary")
+
+
+def test_the_automation_builds_a_new_instance_all_the_way_to_gold():
+    # Walk an empty instance through a weekday morning, recording whatever the
+    # automation asks for as materialized, the way a successful run would.
+    # eager() never builds an asset that was already missing when it was first
+    # evaluated, and holds back everything downstream of a missing one, which
+    # once left the gold models waiting on a seed nothing was going to build.
+    instance = DagsterInstance.ephemeral()
+    every_asset = defs.resolve_asset_graph().get_all_asset_keys()
+    requested, cursor = set(), None
+    tick = datetime(2026, 9, 21, 13, 0, tzinfo=timezone.utc)  # 9:00 in New York
+    for _ in range(6):
+        result = evaluate_automation_conditions(defs, instance, evaluation_time=tick, cursor=cursor)
+        cursor = result.cursor
+        for key in every_asset:
+            for partition in result.get_requested_partitions(key):
+                instance.report_runless_asset_event(AssetMaterialization(key, partition=partition))
+                requested.add(key)
+        tick += timedelta(minutes=10)
+    assert requested == every_asset

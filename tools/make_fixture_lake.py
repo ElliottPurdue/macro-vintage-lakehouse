@@ -24,9 +24,10 @@ from macro_lake.storage import s3_client
 OPEN_ENDED = "9999-12-31"
 RUN_ID = "fixture"
 
-# Each series is written twice: once complete, and once as it would have read on
-# this date, so the models see the same multi-snapshot shape that real as-of
-# pulls produce and the history check has something to compare.
+# Each series is written three times, in the shapes a real lake accumulates: the
+# complete pull, a full pull taken the day before its newest release, and a pull
+# as of this date. The history check has to accept the newest release revising
+# what the earlier full pull showed as current, which it once did not.
 FIXTURE_AS_OF = "2024-06-28"
 
 
@@ -145,6 +146,15 @@ def as_of_rows(rows: list[dict[str, str]], as_of: str) -> list[dict[str, str]]:
     ]
 
 
+def full_pull_rows(rows: list[dict[str, str]], day: str) -> list[dict[str, str]]:
+    """The rows as a full pull taken on day would have returned them, with what was current then open ended."""
+    return [
+        {**row, "realtime_end": OPEN_ENDED if row["realtime_end"] >= day else row["realtime_end"]}
+        for row in rows
+        if row["realtime_start"] <= day
+    ]
+
+
 def series_row(spec: dict, vintage_through: str) -> dict[str, str]:
     return {
         "id": spec["series_id"],
@@ -181,8 +191,14 @@ def main() -> int:
     written = 0
     for spec in SERIES:
         every_version = observation_rows(spec)
-        for as_of in (OPEN_ENDED, FIXTURE_AS_OF):
-            rows = every_version if as_of == OPEN_ENDED else as_of_rows(every_version, as_of)
+        newest_release = date.fromisoformat(max(row["realtime_start"] for row in every_version))
+        day_before = (newest_release - timedelta(days=1)).isoformat()
+        pulls = [
+            ("current", OPEN_ENDED, every_version),
+            (f"full on {day_before}", OPEN_ENDED, full_pull_rows(every_version, day_before)),
+            (f"as of {FIXTURE_AS_OF}", FIXTURE_AS_OF, as_of_rows(every_version, FIXTURE_AS_OF)),
+        ]
+        for label, as_of, rows in pulls:
             vintages = sorted({row["realtime_start"] for row in rows})
             vintage_through = vintages[-1]
             snapshots = [
@@ -204,9 +220,8 @@ def main() -> int:
                     as_of=as_of,
                 )
                 written += created
-            label = "current" if as_of == OPEN_ENDED else f"as of {as_of}"
             print(
-                f"{spec['series_id']:<8} {label:<17} {len(rows):>5} versions "
+                f"{spec['series_id']:<8} {label:<24} {len(rows):>5} versions "
                 f"{len(vintages):>4} vintage dates through {vintage_through}"
             )
     print(f"{written} objects written to s3://{settings.bucket}")

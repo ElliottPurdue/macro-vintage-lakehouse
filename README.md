@@ -41,7 +41,7 @@ How ingestion stays cheap and safe to rerun:
 
 ## Silver and gold
 
-dbt Core reads bronze through DuckDB and writes Parquet back to the lake, so object storage stays the source of truth and DuckDB is only the engine. A full build is 53 nodes in 2.2 s.
+dbt Core reads bronze through DuckDB and writes Parquet back to the lake, so object storage stays the source of truth and DuckDB is only the engine. A full build is 55 nodes in 2.1 s.
 
 `silver/observation_versions.parquet` holds all 158,307 versions, sorted by series and date so readers can skip row groups. Its tests are the interval rules that the rest of the project depends on, and every one of them holds across all 20 series:
 
@@ -59,11 +59,15 @@ A change is always computed against the previous period as it was known on the s
 
 Everything here assumes ALFRED never alters a value it has already superseded. If it did, every answer given before the change would quietly become wrong, and nothing in the data itself would say so.
 
-That is why bronze keeps snapshots rather than a single current view. `history_rewrites` compares every older snapshot against the newest one: a version that had already been superseded must still read exactly as it did, and a version that was still current back then must still exist and must not now be shown as having ended before that snapshot was taken. Across four reconstructed snapshots of all 20 series, it finds nothing, which is the answer you want.
+That is why bronze keeps snapshots rather than a single current view. `history_rewrites` compares every older snapshot against the newest one: a version that had already been superseded must still read exactly as it did, and a version that was still current back then must still exist and must not now be shown as having ended before that snapshot could see. Across four reconstructed snapshots of all 20 series, and the four full pulls that the releases of September 16 to 18 superseded, it finds nothing, which is the answer you want.
 
 A check that has never failed is not known to be capable of failing, so a dbt unit test hands it a snapshot whose value was altered after the fact and asserts that it reports it.
 
+Its first live release failed it anyway, for the wrong reason. Four series brought in new releases on 2026-09-21 and the check reported 11 rewrites, exactly the 11 versions those releases had revised. It was treating a full pull as speaking for all time, so a version an earlier pull showed as current, and a later release revised, looked like the source ending it early. A full pull now speaks only up to the newest release it had seen. Two more unit tests pin the difference in both directions, and the CI fixture now includes an earlier full pull, which the old logic fails 14 times.
+
 ## What the data shows
+
+These figures were measured on 2026-09-16, like the bronze figures above. Every release since moves them slightly.
 
 Revisions are measured over mature observations: those first released at least three years before their series' newest release, so recent figures that have not been through an annual revision yet don't flatter the numbers. That leaves 13,944 of 15,860 observations.
 
@@ -140,10 +144,10 @@ flowchart LR
     bronze_fred_series --> stg_fred__series
 ```
 
-- **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, and the dbt models rebuild as soon as the data they read is updated. The daemon evaluates all ten assets on every tick and launches only what the conditions ask for.
+- **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, the dbt models rebuild as soon as the data they read is updated, and the seed builds whenever the instance has no record of it or its file changes. The daemon evaluates all twelve assets on every tick and launches only what the conditions ask for.
 - **Checks travel with the assets.** Every dbt test appears as an asset check, next to a Python check that each snapshot's newest release date matches the partition it is filed under.
 - **A backfill of all 20 series** ran 20 runs to success in 204 s, two at a time because everything that calls FRED shares one concurrency pool. It made exactly one request per series, wrote nothing, and reported every partition as already current, which is idempotency shown rather than asserted.
-- **The schedule has been watched firing.** Pointing the cron a few minutes ahead with `MACRO_LAKE_INGEST_CRON` had the daemon request all 20 series by itself; all 20 runs succeeded, and the models then rebuilt on their own because their inputs had changed.
+- **It has taken in real releases on its own.** On 2026-09-21 the daemon came back after the weekend, saw that it had missed Friday's 9:15 run, and asked for all 20 series. Sixteen were current and cost one request each. Four had new releases, retail sales, housing starts, jobless claims and industrial production, and were downloaded: 15 new versions, 11 of them revisions, among them July housing starts moving from 1,239,000 to 1,309,000 at an annual rate.
 
 ```bash
 dagster dev                                              # graph, runs and backfills at 127.0.0.1:3000
@@ -151,15 +155,18 @@ dagster job backfill --job ingest_all_series --all       # re-check every series
 MACRO_LAKE_INGEST_CRON="*/5 * * * *" dagster dev         # watch the schedule work now
 ```
 
-That first demonstration failed, which is the argument for running it at all. The dbt run the daemon launched could not see the seed table, because the DuckDB path in the profile was relative: a Dagster run does not start in the same directory a shell does, so two databases existed, one of them missing everything built from the other. The path is pinned to the repository now, and a test asserts it is absolute.
+Watching it run has found a bug every time, which is the argument for doing it:
+
+- **The first scheduled run** could not see the seed table, because the DuckDB path in the profile was relative: a Dagster run does not start in the same directory a shell does, so two databases existed, one of them missing everything built from the other. The path is pinned to the repository now, and a test asserts it is absolute.
+- **The first real release** showed that the orchestrator had never built gold. `eager()` never builds an asset that was already missing when it was first evaluated, and it holds back everything downstream of a missing one, and the seed had only ever been built from the dbt command line. Silver rebuilt itself and gold stayed where it was, which the test requiring gold to cover every observation in silver noticed. The seed now has a condition of its own, and a test walks an empty instance through a weekday morning and requires every asset to have been built by the end of it. The same release tripped the history check, [described above](#does-the-source-rewrite-its-own-history).
 
 ## Tests
 
-- **dbt**: 41 data tests and 3 unit tests, covering the interval rules, the seed, the arithmetic behind the revision numbers, and the history check's own ability to fail.
-- **Python**: 35 unit tests for the ingestion client, the bronze writer, settings and the asset graph, running without a network.
+- **dbt**: 41 data tests and 5 unit tests, covering the interval rules, the seed, the arithmetic behind the revision numbers, and the history check's ability to fail and to tell a revision from a rewrite.
+- **Python**: 36 unit tests for the ingestion client, the bronze writer, settings, the asset graph and its automation, running without a network.
 - **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 20 safeguards on purpose, one at a time, 13 in the Python code and 7 in the dbt models, and confirms a test fails each time.
 - **Freshness**: `dbt source freshness` warns if bronze has not been written to in 10 days and fails at 35, so a pipeline that quietly stopped running shows up as stale data rather than as silence.
-- **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data covering two snapshots per series, builds every model with its tests on Linux, and breaks the model safeguards there too. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
+- **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data covering three snapshots per series (the complete pull, a full pull from the day before the newest release, and one as of a past date), builds every model with its tests on Linux, and breaks the model safeguards there too. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.
 
 ## Stack
 

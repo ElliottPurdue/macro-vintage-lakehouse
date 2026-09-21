@@ -163,6 +163,19 @@ dbt_project.prepare_if_dev()
 
 class LakeDbtTranslator(DagsterDbtTranslator):
     def get_automation_condition(self, dbt_resource_props: dict) -> AutomationCondition:
+        if dbt_resource_props["resource_type"] == "seed":
+            # eager() never builds an asset that was already missing when it was
+            # first evaluated, and it holds back everything downstream of a missing
+            # one, so a seed that only the dbt CLI had built kept gold from ever
+            # running. A seed has no inputs to wait for: build it whenever the
+            # instance has no record of it, unless a build is running or the last
+            # one failed, so a broken seed is not retried on every tick. Build it
+            # again when its file changes.
+            return (
+                AutomationCondition.missing()
+                & ~AutomationCondition.in_progress()
+                & ~AutomationCondition.execution_failed()
+            ) | AutomationCondition.code_version_changed()
         # Rebuild a model as soon as the data it reads has been updated.
         return AutomationCondition.eager()
 
