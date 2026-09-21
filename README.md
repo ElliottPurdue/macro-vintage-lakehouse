@@ -144,7 +144,7 @@ flowchart LR
     bronze_fred_series --> stg_fred__series
 ```
 
-- **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, the dbt models rebuild as soon as the data they read is updated, and the seed builds whenever the instance has no record of it or its file changes. The daemon evaluates all twelve assets on every tick and launches only what the conditions ask for.
+- **Assets declare when they should run.** The bronze assets carry a cron condition, weekday mornings after the 8:30 Eastern releases, the dbt models rebuild as soon as the data they read changes, and the seed builds whenever the instance has no record of it or its file changes. The daemon evaluates all twelve assets on every tick and launches only what the conditions ask for.
 - **Checks travel with the assets.** Every dbt test appears as an asset check, next to a Python check that each snapshot's newest release date matches the partition it is filed under.
 - **A backfill of all 20 series** ran 20 runs to success in 204 s, two at a time because everything that calls FRED shares one concurrency pool. It made exactly one request per series, wrote nothing, and reported every partition as already current, which is idempotency shown rather than asserted.
 - **It has taken in real releases on its own.** On 2026-09-21 the daemon came back after the weekend, saw that it had missed Friday's 9:15 run, and asked for all 20 series. Sixteen were current and cost one request each. Four had new releases, retail sales, housing starts, jobless claims and industrial production, and were downloaded: 15 new versions, 11 of them revisions, among them July housing starts moving from 1,239,000 to 1,309,000 at an annual rate.
@@ -155,15 +155,16 @@ dagster job backfill --job ingest_all_series --all       # re-check every series
 MACRO_LAKE_INGEST_CRON="*/5 * * * *" dagster dev         # watch the schedule work now
 ```
 
-Watching it run has found a bug every time, which is the argument for doing it:
+Watching it run has turned up a problem every time, which is the argument for doing it:
 
 - **The first scheduled run** could not see the seed table, because the DuckDB path in the profile was relative: a Dagster run does not start in the same directory a shell does, so two databases existed, one of them missing everything built from the other. The path is pinned to the repository now, and a test asserts it is absolute.
 - **The first real release** showed that the orchestrator had never built gold. `eager()` never builds an asset that was already missing when it was first evaluated, and it holds back everything downstream of a missing one, and the seed had only ever been built from the dbt command line. Silver rebuilt itself and gold stayed where it was, which the test requiring gold to cover every observation in silver noticed. The seed now has a condition of its own, and a test walks an empty instance through a weekday morning and requires every asset to have been built by the end of it. The same release tripped the history check, [described above](#does-the-source-rewrite-its-own-history).
+- **The first unattended run** rebuilt every model although no series had anything new, because a series found current is still recorded as materialized. Not recording it would have been worse: Dagster marks a backfilled partition that a successful run never materialized as failed, so every quiet morning would have ended in red. Instead each bronze materialization carries a data version, the newest release that series holds, and the models reading bronze wait for a version to move. A test runs a quiet Tuesday and a Wednesday with one release through the automation, and two live checks five minutes apart agreed: the first rebuilt the models once as the versions were introduced, and the second found all 20 series current and rebuilt nothing.
 
 ## Tests
 
 - **dbt**: 41 data tests and 5 unit tests, covering the interval rules, the seed, the arithmetic behind the revision numbers, and the history check's ability to fail and to tell a revision from a rewrite.
-- **Python**: 36 unit tests for the ingestion client, the bronze writer, settings, the asset graph and its automation, running without a network.
+- **Python**: 38 unit tests for the ingestion client, the bronze writer, settings, the asset graph and its automation, running without a network.
 - **Mutation check**: [tools/mutate.py](tools/mutate.py) breaks 20 safeguards on purpose, one at a time, 13 in the Python code and 7 in the dbt models, and confirms a test fails each time.
 - **Freshness**: `dbt source freshness` warns if bronze has not been written to in 10 days and fails at 35, so a pipeline that quietly stopped running shows up as stale data rather than as silence.
 - **CI** runs the unit tests and the Python mutations on Python 3.11 and 3.13, then starts SeaweedFS as a service container, fills bronze with synthetic fixture data covering three snapshots per series (the complete pull, a full pull from the day before the newest release, and one as of a past date), builds every model with its tests on Linux, and breaks the model safeguards there too. No API key is involved: [tools/make_fixture_lake.py](tools/make_fixture_lake.py) writes ALFRED-shaped data, revisions and withdrawn periods included, through the same bronze writer the real ingestion uses.

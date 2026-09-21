@@ -20,6 +20,7 @@ from dagster import (
     AssetSpec,
     AutomationCondition,
     AutomationConditionSensorDefinition,
+    DataVersion,
     DefaultSensorStatus,
     Definitions,
     Failure,
@@ -111,11 +112,20 @@ def alfred_snapshots(context: AssetExecutionContext) -> Iterator[MaterializeResu
         "objects_written": result.objects_written,
         "api_requests": client.requests_made,
     }
-    yield MaterializeResult(asset_key=BRONZE_KEYS[bronze.OBSERVATIONS], metadata={**common, "rows": result.rows})
+    # Every check is recorded, current or not, so each series keeps a history of
+    # when it was looked at. The data version is the newest release the series
+    # holds, which only moves when a release lands, and that is what the models
+    # reading bronze wait for.
+    version = DataVersion(result.vintage_through or "none")
     yield MaterializeResult(
-        asset_key=BRONZE_KEYS[bronze.VINTAGE_DATES], metadata={**common, "vintage_dates": result.vintages}
+        asset_key=BRONZE_KEYS[bronze.OBSERVATIONS], metadata={**common, "rows": result.rows}, data_version=version
     )
-    yield MaterializeResult(asset_key=BRONZE_KEYS[bronze.SERIES], metadata=common)
+    yield MaterializeResult(
+        asset_key=BRONZE_KEYS[bronze.VINTAGE_DATES],
+        metadata={**common, "vintage_dates": result.vintages},
+        data_version=version,
+    )
+    yield MaterializeResult(asset_key=BRONZE_KEYS[bronze.SERIES], metadata=common, data_version=version)
 
 
 @asset_check(
@@ -176,6 +186,16 @@ class LakeDbtTranslator(DagsterDbtTranslator):
                 & ~AutomationCondition.in_progress()
                 & ~AutomationCondition.execution_failed()
             ) | AutomationCondition.code_version_changed()
+        parents = dbt_resource_props.get("depends_on", {}).get("nodes", [])
+        if any(parent.startswith("source.") for parent in parents):
+            # A model reading bronze would otherwise rebuild after every weekday
+            # check, because a series found current is still materialized. It
+            # waits for a data version to move instead: a release has landed.
+            # The label is Dagster's, and replace() ignores a label it can't
+            # find, so a test runs a quiet morning to catch a rename.
+            return AutomationCondition.eager().replace(
+                "newly_updated_without_root", AutomationCondition.data_version_changed()
+            )
         # Rebuild a model as soon as the data it reads has been updated.
         return AutomationCondition.eager()
 
